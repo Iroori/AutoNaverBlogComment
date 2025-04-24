@@ -38,7 +38,8 @@ namespace RJBlogProject.Service
                 // 최신 글로 이동 시도
                 try
                 {
-                    var latestPostLink = _driver.WaitAndFindElement(By.XPath("//*[@id='prologue']/dl/dd[1]/ul/li[1]/a"));
+                    // 수정된 XPath - 첫 번째 글 선택
+                    var latestPostLink = _driver.WaitAndFindElement(By.XPath("//*[@id='prologue']/dl/dd[1]/p/a"));
                     _driver.ClickWithJavaScript(latestPostLink);
                     _driver.WaitForPageLoad(2000);
                     Logger.Info("Navigated to latest post successfully");
@@ -46,9 +47,24 @@ namespace RJBlogProject.Service
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error("Failed to navigate to latest post", ex);
+                    Logger.Error("Failed to navigate to latest post with primary XPath", ex);
                     
-                    // 다른 선택자로 재시도
+                    // 다른 XPath 패턴으로 재시도
+                    try {
+                        var alternateLink = _driver.FindElementSafely(By.XPath("//*[@id='prologue']/dl/dd[1]/ul/li[1]/a"));
+                        if (alternateLink != null)
+                        {
+                            _driver.ClickWithJavaScript(alternateLink);
+                            _driver.WaitForPageLoad(2000);
+                            Logger.Info("Navigated to latest post using alternate XPath");
+                            return true;
+                        }
+                    }
+                    catch (Exception) {
+                        Logger.Warning("Failed with first alternate XPath too");
+                    }
+                    
+                    // CSS 선택자로 재시도
                     try
                     {
                         var alternatePosts = _driver.WaitAndFindElements(By.CssSelector(".blog2_series_list .series_item a"));
@@ -56,13 +72,13 @@ namespace RJBlogProject.Service
                         {
                             _driver.ClickWithJavaScript(alternatePosts[0]);
                             _driver.WaitForPageLoad(2000);
-                            Logger.Info("Navigated to latest post using alternate selector");
+                            Logger.Info("Navigated to latest post using alternate CSS selector");
                             return true;
                         }
                     }
                     catch (Exception altEx)
                     {
-                        Logger.Error("Failed with alternate selector too", altEx);
+                        Logger.Error("Failed with all selectors", altEx);
                     }
                     return false;
                 }
@@ -163,7 +179,7 @@ namespace RJBlogProject.Service
                     _driver.WaitForPageLoad(2000);
 
                     // 블로그의 최신 글에 댓글 작성
-                    if (PostCommentOnBlog(commentText))
+                    if (FindLatestPostAndComment(commentText))
                     {
                         processedCount++;
                     }
@@ -196,54 +212,189 @@ namespace RJBlogProject.Service
             Logger.Info($"Successfully processed {processedCount} comments");
         }
 
-        private bool PostCommentOnBlog(string commentText)
+        private bool FindLatestPostAndComment(string commentText)
         {
             try
             {
                 // iframe으로 전환
                 _driver.SwitchToFrameSafely("mainFrame");
                 
-                // 최신 글의 댓글 버튼 찾기
-                var postElement = _driver.FindElementSafely(By.XPath("//*[@id='post_1']"));
-                if (postElement == null)
+                // 최신 글 찾기 (다양한 XPath 패턴 시도)
+                IWebElement latestPost = null;
+                
+                // 1. 첫 번째 패턴 시도 (dd[1]/p/a)
+                latestPost = _driver.FindElementSafely(By.XPath("//*[@id='prologue']/dl/dd[1]/p/a"));
+                
+                // 2. 두 번째 패턴 시도 (dd[1]/ul/li[1]/a)
+                if (latestPost == null)
                 {
-                    Logger.Warning("Post element not found");
+                    latestPost = _driver.FindElementSafely(By.XPath("//*[@id='prologue']/dl/dd[1]/ul/li[1]/a"));
+                }
+                
+                // 3. 세 번째 패턴 시도 (CSS 선택자)
+                if (latestPost == null)
+                {
+                    var posts = _driver.FindElementSafely(By.CssSelector(".blog2_series_list .series_item:first-child a"));
+                    if (posts != null)
+                    {
+                        latestPost = posts;
+                    }
+                }
+                
+                // 최신 글을 찾지 못한 경우
+                if (latestPost == null)
+                {
+                    Logger.Warning("Latest post not found on this blog");
                     return false;
                 }
+                
+                // 최신 글로 이동
+                _driver.ClickWithJavaScript(latestPost);
+                _driver.WaitForPageLoad(2000);
+                
+                // 댓글 작성
+                return PostCommentOnCurrentPost(commentText);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Error finding latest post", ex);
+                return false;
+            }
+        }
 
-                // 댓글 버튼 찾기 (동적 ID)
-                var dynamicElement = postElement.FindElementSafely(By.XPath(".//a[contains(@id, 'Comi') and contains(@class, 'btn_comment')]"));
-                if (dynamicElement == null)
+        private bool PostCommentOnCurrentPost(string commentText)
+        {
+            try
+            {
+                Logger.Info("Attempting to post comment on current post");
+                
+                // 댓글 버튼 찾기 (다양한 패턴 시도)
+                IWebElement commentButton = null;
+                
+                // 1. 일반적인 댓글 버튼 패턴
+                commentButton = _driver.FindElementSafely(By.CssSelector("a.btn_comment"));
+                
+                // 2. 동적 ID를 가진 댓글 버튼 패턴
+                if (commentButton == null)
+                {
+                    commentButton = _driver.FindElementSafely(By.XPath("//a[contains(@id, 'Comi') and contains(@class, 'btn_comment')]"));
+                }
+                
+                // 댓글 버튼을 찾지 못한 경우
+                if (commentButton == null)
                 {
                     Logger.Warning("Comment button not found");
                     return false;
                 }
 
-                _driver.ClickWithJavaScript(dynamicElement);
-                _driver.WaitForPageLoad(1500);
+                _driver.ClickWithJavaScript(commentButton);
+                _driver.WaitForPageLoad(2000);
+                Logger.Info("Clicked comment button");
 
-                // 댓글 입력 영역 찾기
-                var divElement = _driver.WaitAndFindElement(By.XPath("//*[contains(@id,'write_textarea')]"));
-                
-                // 댓글 입력
-                var actions = new Actions(_driver);
-                actions.MoveToElement(divElement).Click()
-                       .SendKeys(commentText)
-                       .Perform();
-                
-                _driver.WaitForPageLoad(1000);
+                // 댓글 작성을 위한 여러 패턴 시도
+                try
+                {
+                    // 1. 제공된 네이버 블로그 댓글 XPath 패턴
+                    // 댓글 ID가 동적으로 변경될 수 있으므로 패턴 사용
+                    var commentForm = _driver.FindElementSafely(By.XPath("//*[contains(@id, 'naverComment_')]/div/div[5]/div[1]/form/fieldset"));
+                    
+                    if (commentForm != null)
+                    {
+                        Logger.Info("Found comment form with specific XPath pattern");
+                        
+                        // 댓글 입력 영역 찾기
+                        var textArea = commentForm.FindElementSafely(By.XPath(".//div/div/div[contains(@class, 'u_cbox_text')]"));
+                        if (textArea != null)
+                        {
+                            // 댓글 입력
+                            var actions = new Actions(_driver);
+                            actions.MoveToElement(textArea).Click()
+                                   .SendKeys(commentText)
+                                   .Perform();
+                            
+                            _driver.WaitForPageLoad(1000);
+                            Logger.Info("Entered comment text");
+                            
+                            // 등록 버튼 클릭
+                            var submitButton = commentForm.FindElementSafely(By.XPath(".//div/div/div[6]/button"));
+                            if (submitButton != null)
+                            {
+                                _driver.ClickWithJavaScript(submitButton);
+                                _driver.WaitForPageLoad(2000);
+                                Logger.Info("Comment posted with specific XPath pattern");
+                                return true;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Couldn't post comment with specific XPath pattern: {ex.Message}");
+                }
 
-                // 댓글 등록 버튼 클릭
-                var button = _driver.WaitAndFindElement(By.XPath("//*[@class='u_cbox_btn_upload' and @type='button']"));
-                _driver.ClickWithJavaScript(button);
+                // 2. 기존 방식으로 시도
+                try
+                {
+                    var textArea = _driver.FindElementSafely(By.XPath("//*[contains(@id,'write_textarea')]"));
+                    if (textArea != null)
+                    {
+                        var actions = new Actions(_driver);
+                        actions.MoveToElement(textArea).Click()
+                               .SendKeys(commentText)
+                               .Perform();
+                        
+                        _driver.WaitForPageLoad(1000);
+                        Logger.Info("Entered comment text with alternate method");
+                        
+                        var uploadButton = _driver.FindElementSafely(By.XPath("//*[@class='u_cbox_btn_upload' and @type='button']"));
+                        if (uploadButton != null)
+                        {
+                            _driver.ClickWithJavaScript(uploadButton);
+                            _driver.WaitForPageLoad(2000);
+                            Logger.Info("Comment posted with alternate method");
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Couldn't post comment with alternate method: {ex.Message}");
+                }
+
+                // 3. 일반적인 CSS 선택자로 시도
+                try
+                {
+                    var textArea = _driver.FindElementSafely(By.CssSelector(".u_cbox_text"));
+                    if (textArea != null)
+                    {
+                        var actions = new Actions(_driver);
+                        actions.MoveToElement(textArea).Click()
+                               .SendKeys(commentText)
+                               .Perform();
+                        
+                        _driver.WaitForPageLoad(1000);
+                        
+                        var uploadButton = _driver.FindElementSafely(By.CssSelector(".u_cbox_btn_upload"));
+                        if (uploadButton != null)
+                        {
+                            _driver.ClickWithJavaScript(uploadButton);
+                            _driver.WaitForPageLoad(2000);
+                            Logger.Info("Comment posted with CSS selector method");
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"All comment posting methods failed: {ex.Message}");
+                }
                 
-                _driver.WaitForPageLoad(1500);
-                Logger.Info("Comment posted successfully");
-                return true;
+                Logger.Warning("Failed to post comment after trying multiple patterns");
+                return false;
             }
             catch (Exception ex)
             {
-                Logger.Error("Error posting comment", ex);
+                Logger.Error("Error in PostCommentOnCurrentPost", ex);
                 return false;
             }
         }
