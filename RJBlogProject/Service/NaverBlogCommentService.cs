@@ -13,6 +13,7 @@ namespace RJBlogProject.Service
     {
         private readonly IWebDriver _driver;
         private readonly AppSettings _settings;
+        private HashSet<string> _processedAuthors = new HashSet<string>(); // 이미 처리한 작성자 추적
 
         public NaverBlogCommentService(IWebDriver driver, AppSettings settings = null)
         {
@@ -144,6 +145,7 @@ namespace RJBlogProject.Service
 
         /// <summary>
         /// 모든 댓글 페이지를 탐색하여 전체 댓글 작성자 목록을 수집합니다.
+        /// 마지막 페이지부터 시작하여 이전 버튼을 클릭하며 모든 페이지를 순회합니다.
         /// </summary>
         private List<string> CollectAllCommentAuthors()
         {
@@ -153,49 +155,46 @@ namespace RJBlogProject.Service
             
             try
             {
+                // 현재 페이지의 댓글 작성자 수집
+                CollectAuthorsFromCurrentPage(allAuthors);
+                
+                // 이전 페이지 버튼이 있는지 확인하고 있다면 클릭
                 while (hasMorePages)
                 {
-                    Logger.Info($"Collecting comments from page {pageCount}");
+                    Logger.Info($"Looking for previous page button (page {pageCount})");
                     
-                    // 현재 페이지의 댓글 목록 가져오기
-                    var commentsList = _driver.WaitAndFindElement(By.CssSelector("ul.u_cbox_list"));
-                    var comments = commentsList.FindElements(By.CssSelector("li"));
+                    // 이전 버튼 찾기 (제공해주신 XPath 사용)
+                    var prevButton = _driver.FindElementSafely(By.XPath("//*[contains(@id, 'naverComment_')]/div[1]/div/div[2]/a[1]"));
                     
-                    Logger.Info($"Found {comments.Count} comments on page {pageCount}");
-                    
-                    // 각 댓글에서 작성자 블로그 URL 추출
-                    foreach (var comment in comments)
+                    // 이전 버튼이 없거나 비활성화되었다면 종료
+                    if (prevButton == null || 
+                        prevButton.GetAttribute("class").Contains("disabled") || 
+                        "true".Equals(prevButton.GetAttribute("aria-disabled"), StringComparison.OrdinalIgnoreCase))
                     {
-                        try
-                        {
-                            var authorElement = comment.FindElement(By.ClassName("u_cbox_name"));
-                            var blogUrl = authorElement.GetAttribute("href");
-                            
-                            if (!string.IsNullOrEmpty(blogUrl) && !allAuthors.Contains(blogUrl))
-                            {
-                                allAuthors.Add(blogUrl);
-                                Logger.Info($"Added author URL: {blogUrl}");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Warning($"Failed to extract author from comment: {ex.Message}");
-                        }
+                        Logger.Info("No more previous pages found");
+                        hasMorePages = false;
+                        break;
                     }
                     
-                    // 다음 페이지 버튼이 있는지 확인
-                    hasMorePages = GoToNextCommentPage(pageCount);
+                    // 이전 버튼 클릭
+                    _driver.ClickWithJavaScript(prevButton);
+                    _driver.WaitForPageLoad(2000);
+                    Logger.Info($"Navigated to previous comment page");
+                    
+                    // 현재 페이지의 댓글 작성자 수집
+                    CollectAuthorsFromCurrentPage(allAuthors);
+                    
                     pageCount++;
                     
                     // 안전 장치: 20페이지 이상 진행하지 않음
-                    if (pageCount > 20)
+                    if (pageCount > 5)
                     {
                         Logger.Warning("Reached maximum page limit (20)");
                         break;
                     }
                 }
                 
-                Logger.Info($"Collected {allAuthors.Count} unique comment authors from {pageCount-1} pages");
+                Logger.Info($"Collected {allAuthors.Count} unique comment authors from {pageCount} pages");
                 return allAuthors;
             }
             catch (Exception ex)
@@ -206,75 +205,62 @@ namespace RJBlogProject.Service
         }
 
         /// <summary>
-        /// 댓글의 다음 페이지로 이동합니다.
+        /// 현재 페이지의 댓글 작성자를 수집합니다.
         /// </summary>
-        private bool GoToNextCommentPage(int currentPage)
+        private void CollectAuthorsFromCurrentPage(List<string> authors)
         {
             try
             {
-                // 페이지 내비게이션 영역 찾기
-                var pageNavigation = _driver.FindElementSafely(By.CssSelector(".u_cbox_paginate"));
-                if (pageNavigation == null)
-                {
-                    Logger.Info("No pagination found - only one page of comments");
-                    return false;
-                }
-                
-                // 다음 페이지 버튼 시도 1: 특정 페이지 번호 클릭
+                // 현재 페이지 번호 확인 시도
+                string currentPageNum = "Unknown";
                 try
                 {
-                    var nextPageButton = pageNavigation.FindElementSafely(By.XPath($".//a[text()='{currentPage + 1}']"));
-                    if (nextPageButton != null)
+                    var activePage = _driver.FindElementSafely(By.CssSelector(".u_cbox_page .u_cbox_num.u_cbox_active"));
+                    if (activePage != null)
                     {
-                        _driver.ClickWithJavaScript(nextPageButton);
-                        _driver.WaitForPageLoad(2000);
-                        Logger.Info($"Navigated to comment page {currentPage + 1}");
-                        return true;
+                        currentPageNum = activePage.Text;
                     }
                 }
-                catch (Exception) { }
+                catch { /* 페이지 번호를 찾지 못해도 계속 진행 */ }
                 
-                // 다음 페이지 버튼 시도 2: '다음' 버튼 클릭
-                try
-                {
-                    var nextButton = pageNavigation.FindElementSafely(By.CssSelector(".u_cbox_next"));
-                    if (nextButton != null && nextButton.GetAttribute("aria-disabled") != "true")
-                    {
-                        _driver.ClickWithJavaScript(nextButton);
-                        _driver.WaitForPageLoad(2000);
-                        Logger.Info($"Navigated to next comment page using 'Next' button");
-                        return true;
-                    }
-                }
-                catch (Exception) { }
+                Logger.Info($"Collecting authors from page {currentPageNum}");
                 
-                // 다음 페이지 버튼 시도 3: 마지막으로 보이는 페이지 번호 클릭
-                try
+                // 댓글 목록 가져오기
+                var commentsList = _driver.WaitAndFindElement(By.CssSelector("ul.u_cbox_list"));
+                var comments = commentsList.FindElements(By.CssSelector("li"));
+                
+                Logger.Info($"Found {comments.Count} comments on this page");
+                
+                int newAuthorsCount = 0;
+                
+                // 각 댓글에서 작성자 블로그 URL 추출
+                foreach (var comment in comments)
                 {
-                    var pageButtons = pageNavigation.FindElements(By.CssSelector(".u_cbox_num"));
-                    if (pageButtons.Count > 0)
+                    try
                     {
-                        var lastVisiblePage = pageButtons.Last();
-                        var lastPageNum = int.Parse(lastVisiblePage.Text);
+                        var authorElement = comment.FindElement(By.ClassName("u_cbox_name"));
+                        var authorName = authorElement.Text;
+                        var blogUrl = authorElement.GetAttribute("href");
                         
-                        if (lastPageNum > currentPage)
+                        if (!string.IsNullOrEmpty(blogUrl) && !_processedAuthors.Contains(blogUrl))
                         {
-                            _driver.ClickWithJavaScript(lastVisiblePage);
-                            _driver.WaitForPageLoad(2000);
-                            Logger.Info($"Navigated to comment page {lastPageNum}");
-                            return true;
+                            authors.Add(blogUrl);
+                            _processedAuthors.Add(blogUrl); // 처리한 작성자 추적
+                            newAuthorsCount++;
+                            Logger.Info($"Added author: {authorName} with URL: {blogUrl}");
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        Logger.Warning($"Failed to extract author from comment: {ex.Message}");
+                    }
                 }
-                catch (Exception) { }
                 
-                Logger.Info("No more comment pages found");
-                return false;
+                Logger.Info($"Added {newAuthorsCount} new authors from this page");
             }
             catch (Exception ex)
             {
-                Logger.Error($"Error navigating to next comment page: {ex.Message}");
-                return false;
+                Logger.Error($"Error collecting authors from current page: {ex.Message}");
             }
         }
 
