@@ -24,6 +24,21 @@ namespace RJBlogProject.Common
         }
 
         /// <summary>
+        /// IWebElement에서 안전하게 하위 요소를 찾아 반환합니다. 찾지 못하면 null을 반환합니다.
+        /// </summary>
+        public static IWebElement FindElementSafely(this IWebElement element, By by)
+        {
+            try
+            {
+                return element.FindElement(by);
+            }
+            catch (NoSuchElementException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
         /// 요소가 나타날 때까지 기다린 후 찾아 반환합니다.
         /// </summary>
         public static IWebElement WaitAndFindElement(this IWebDriver driver, By by, int timeoutInSeconds = 10)
