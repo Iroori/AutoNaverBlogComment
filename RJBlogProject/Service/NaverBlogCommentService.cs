@@ -22,7 +22,7 @@ namespace RJBlogProject.Service
         }
 
         /// <summary>
-        /// 블로그의 최신 글로 이동합니다.
+        /// 블로그의 최신 글로 이동합니다. 이미 최신글에 있는 경우 추가 작업을 하지 않습니다.
         /// </summary>
         public bool GoToLatestPost(string blogId = null)
         {
@@ -37,6 +37,39 @@ namespace RJBlogProject.Service
 
                 // iframe으로 전환
                 _driver.SwitchToFrameSafely("mainFrame");
+                
+                // 현재 URL 확인하여 이미 최신글에 있는지 확인
+                string currentUrl = _driver.Url.ToLower();
+                Logger.Info($"Current URL: {currentUrl}");
+                
+                // 이미 PostView.naver 또는 PostList.naver에 있는 경우 추가 클릭이 필요 없음
+                if (currentUrl.Contains("postview.naver") || 
+                    (currentUrl.Contains("postlist.naver") && currentUrl.Contains("directaccess=true")))
+                {
+                    Logger.Info("Already on a post page, no need to navigate to latest post");
+                    return true;
+                }
+                
+                // iframe 소스 확인
+                bool isAlreadyInPostView = false;
+                try 
+                {
+                    var iframeSrc = _driver.FindElement(By.Id("mainFrame")).GetAttribute("src");
+                    Logger.Info($"iframe src: {iframeSrc}");
+                    
+                    isAlreadyInPostView = iframeSrc.Contains("PostView.naver") || 
+                        (iframeSrc.Contains("PostList.naver") && iframeSrc.Contains("directAccess=true"));
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Failed to check iframe src: {ex.Message}");
+                }
+                
+                if (isAlreadyInPostView)
+                {
+                    Logger.Info("Already on a post page (detected via iframe), no need to navigate to latest post");
+                    return true;
+                }
 
                 // 최신 글로 이동 시도
                 try
@@ -83,6 +116,19 @@ namespace RJBlogProject.Service
                     {
                         Logger.Error("Failed with all selectors", altEx);
                     }
+                    
+                    // 포스트 내에 있는지 확인 (댓글 버튼 존재 여부로 확인)
+                    try
+                    {
+                        var commentButton = _driver.FindElementSafely(By.CssSelector("a.btn_comment"));
+                        if (commentButton != null)
+                        {
+                            Logger.Info("Comment button found - already on a post page");
+                            return true;
+                        }
+                    }
+                    catch (Exception) { }
+                    
                     return false;
                 }
             }
@@ -187,7 +233,7 @@ namespace RJBlogProject.Service
                     pageCount++;
                     
                     // 안전 장치: 20페이지 이상 진행하지 않음
-                    if (pageCount > 5)
+                    if (pageCount > 20)
                     {
                         Logger.Warning("Reached maximum page limit (20)");
                         break;
@@ -342,6 +388,17 @@ namespace RJBlogProject.Service
                 // iframe으로 전환
                 _driver.SwitchToFrameSafely("mainFrame");
                 
+                // 현재 URL 확인하여 이미 최신글에 있는지 확인
+                string currentUrl = _driver.Url.ToLower();
+                
+                // 이미 PostView.naver 또는 PostList.naver에 있는 경우 추가 클릭이 필요 없음
+                if (currentUrl.Contains("postview.naver") || 
+                    (currentUrl.Contains("postlist.naver") && currentUrl.Contains("directaccess=true")))
+                {
+                    Logger.Info("Already on a post page, proceeding to comment");
+                    return PostCommentOnCurrentPost(commentText);
+                }
+                
                 // 최신 글 찾기 (다양한 XPath 패턴 시도)
                 IWebElement latestPost = null;
                 
@@ -364,9 +421,16 @@ namespace RJBlogProject.Service
                     }
                 }
                 
-                // 최신 글을 찾지 못한 경우
+                // 포스트 내에 있는지 확인 (댓글 버튼 존재 여부로 확인)
                 if (latestPost == null)
                 {
+                    var commentButton = _driver.FindElementSafely(By.CssSelector("a.btn_comment"));
+                    if (commentButton != null)
+                    {
+                        Logger.Info("Comment button found - already on a post page");
+                        return PostCommentOnCurrentPost(commentText);
+                    }
+                    
                     Logger.Warning("Latest post not found on this blog");
                     return false;
                 }
