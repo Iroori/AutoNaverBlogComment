@@ -61,7 +61,7 @@ namespace RJBlogProject.Service
                 var loginButton = Driver.WaitAndFindElement(By.Id("log.login"));
                 Driver.ClickWithJavaScript(loginButton);
 
-                Driver.WaitForPageLoad(3000);
+                Driver.WaitForPageLoad(2000);
 
                 // 로그인 확인
                 bool isLoggedIn = IsLoggedIn();

@@ -4,6 +4,8 @@ using RJBlogProject.Common;
 using RJBlogProject.Config;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 
 namespace RJBlogProject.Service
 {
@@ -91,7 +93,7 @@ namespace RJBlogProject.Service
         }
 
         /// <summary>
-        /// 최신 댓글의 작성자 블로그를 방문하여 댓글을 작성합니다.
+        /// 게시글의 모든 댓글 페이지를 탐색하여 각 댓글 작성자의 블로그에 방문하여 댓글을 답니다.
         /// </summary>
         public void ReplyToLatestComment(string commentText = null)
         {
@@ -107,19 +109,17 @@ namespace RJBlogProject.Service
                 _driver.ClickWithJavaScript(commentButton);
                 _driver.WaitForPageLoad(2000);
 
-                // 댓글 목록 가져오기
-                Logger.Info("Finding comments...");
-                var commentsList = _driver.WaitAndFindElement(By.CssSelector("ul.u_cbox_list"));
-                var comments = commentsList.FindElements(By.CssSelector("li"));
+                // 모든 페이지의 댓글 수집
+                var allCommentAuthors = CollectAllCommentAuthors();
                 
-                if (comments.Count == 0)
+                if (allCommentAuthors.Count == 0)
                 {
-                    Logger.Warning("No comments found");
+                    Logger.Warning("No comment authors found");
                     return;
                 }
 
-                Logger.Info($"Found {comments.Count} comments");
-                ProcessComments(comments, commentText);
+                Logger.Info($"Found {allCommentAuthors.Count} total comment authors across all pages");
+                ProcessCommentAuthors(allCommentAuthors, commentText);
             }
             catch (Exception ex)
             {
@@ -142,34 +142,162 @@ namespace RJBlogProject.Service
             }
         }
 
-        private void ProcessComments(IList<IWebElement> comments, string commentText)
+        /// <summary>
+        /// 모든 댓글 페이지를 탐색하여 전체 댓글 작성자 목록을 수집합니다.
+        /// </summary>
+        private List<string> CollectAllCommentAuthors()
+        {
+            var allAuthors = new List<string>();
+            bool hasMorePages = true;
+            int pageCount = 1;
+            
+            try
+            {
+                while (hasMorePages)
+                {
+                    Logger.Info($"Collecting comments from page {pageCount}");
+                    
+                    // 현재 페이지의 댓글 목록 가져오기
+                    var commentsList = _driver.WaitAndFindElement(By.CssSelector("ul.u_cbox_list"));
+                    var comments = commentsList.FindElements(By.CssSelector("li"));
+                    
+                    Logger.Info($"Found {comments.Count} comments on page {pageCount}");
+                    
+                    // 각 댓글에서 작성자 블로그 URL 추출
+                    foreach (var comment in comments)
+                    {
+                        try
+                        {
+                            var authorElement = comment.FindElement(By.ClassName("u_cbox_name"));
+                            var blogUrl = authorElement.GetAttribute("href");
+                            
+                            if (!string.IsNullOrEmpty(blogUrl) && !allAuthors.Contains(blogUrl))
+                            {
+                                allAuthors.Add(blogUrl);
+                                Logger.Info($"Added author URL: {blogUrl}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warning($"Failed to extract author from comment: {ex.Message}");
+                        }
+                    }
+                    
+                    // 다음 페이지 버튼이 있는지 확인
+                    hasMorePages = GoToNextCommentPage(pageCount);
+                    pageCount++;
+                    
+                    // 안전 장치: 20페이지 이상 진행하지 않음
+                    if (pageCount > 20)
+                    {
+                        Logger.Warning("Reached maximum page limit (20)");
+                        break;
+                    }
+                }
+                
+                Logger.Info($"Collected {allAuthors.Count} unique comment authors from {pageCount-1} pages");
+                return allAuthors;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error collecting all comment authors: {ex.Message}");
+                return allAuthors; // 수집된 댓글이라도 반환
+            }
+        }
+
+        /// <summary>
+        /// 댓글의 다음 페이지로 이동합니다.
+        /// </summary>
+        private bool GoToNextCommentPage(int currentPage)
+        {
+            try
+            {
+                // 페이지 내비게이션 영역 찾기
+                var pageNavigation = _driver.FindElementSafely(By.CssSelector(".u_cbox_paginate"));
+                if (pageNavigation == null)
+                {
+                    Logger.Info("No pagination found - only one page of comments");
+                    return false;
+                }
+                
+                // 다음 페이지 버튼 시도 1: 특정 페이지 번호 클릭
+                try
+                {
+                    var nextPageButton = pageNavigation.FindElementSafely(By.XPath($".//a[text()='{currentPage + 1}']"));
+                    if (nextPageButton != null)
+                    {
+                        _driver.ClickWithJavaScript(nextPageButton);
+                        _driver.WaitForPageLoad(2000);
+                        Logger.Info($"Navigated to comment page {currentPage + 1}");
+                        return true;
+                    }
+                }
+                catch (Exception) { }
+                
+                // 다음 페이지 버튼 시도 2: '다음' 버튼 클릭
+                try
+                {
+                    var nextButton = pageNavigation.FindElementSafely(By.CssSelector(".u_cbox_next"));
+                    if (nextButton != null && nextButton.GetAttribute("aria-disabled") != "true")
+                    {
+                        _driver.ClickWithJavaScript(nextButton);
+                        _driver.WaitForPageLoad(2000);
+                        Logger.Info($"Navigated to next comment page using 'Next' button");
+                        return true;
+                    }
+                }
+                catch (Exception) { }
+                
+                // 다음 페이지 버튼 시도 3: 마지막으로 보이는 페이지 번호 클릭
+                try
+                {
+                    var pageButtons = pageNavigation.FindElements(By.CssSelector(".u_cbox_num"));
+                    if (pageButtons.Count > 0)
+                    {
+                        var lastVisiblePage = pageButtons.Last();
+                        var lastPageNum = int.Parse(lastVisiblePage.Text);
+                        
+                        if (lastPageNum > currentPage)
+                        {
+                            _driver.ClickWithJavaScript(lastVisiblePage);
+                            _driver.WaitForPageLoad(2000);
+                            Logger.Info($"Navigated to comment page {lastPageNum}");
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception) { }
+                
+                Logger.Info("No more comment pages found");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error navigating to next comment page: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 수집된 모든 댓글 작성자의 블로그를 순차적으로 방문하여 댓글을 답니다.
+        /// </summary>
+        private void ProcessCommentAuthors(List<string> authorUrls, string commentText)
         {
             int processedCount = 0;
+            int maxAuthors = Math.Min(authorUrls.Count, 50); // 최대 50명 처리 (안전 제한)
             string originalWindow = _driver.CurrentWindowHandle;
 
-            foreach (var comment in comments)
+            foreach (var blogUrl in authorUrls)
             {
-                if (processedCount >= 5) // 최대 5개 댓글만 처리
+                if (processedCount >= maxAuthors)
                 {
-                    Logger.Info("Reached maximum comment processing limit");
+                    Logger.Info($"Reached maximum author processing limit ({maxAuthors})");
                     break;
                 }
 
                 try
                 {
-                    Logger.Info($"Processing comment {processedCount + 1}");
-                    
-                    // 댓글 작성자 링크 찾기
-                    var aTag = comment.FindElement(By.ClassName("u_cbox_name"));
-                    var blogUrl = aTag.GetAttribute("href");
-                    
-                    if (string.IsNullOrEmpty(blogUrl))
-                    {
-                        Logger.Warning("Blog URL is empty, skipping");
-                        continue;
-                    }
-
-                    Logger.Info($"Opening blog: {blogUrl}");
+                    Logger.Info($"Processing author {processedCount + 1}/{authorUrls.Count}: {blogUrl}");
                     
                     // 새 탭에서 블로그 열기
                     ((IJavaScriptExecutor)_driver).ExecuteScript("window.open();");
@@ -182,16 +310,25 @@ namespace RJBlogProject.Service
                     if (FindLatestPostAndComment(commentText))
                     {
                         processedCount++;
+                        Logger.Info($"Successfully commented on blog: {blogUrl}");
+                    }
+                    else
+                    {
+                        Logger.Warning($"Failed to comment on blog: {blogUrl}");
                     }
 
                     // 탭 닫기 및 원래 탭으로 전환
                     _driver.Close();
                     _driver.SwitchTo().Window(originalWindow);
                     _driver.WaitForPageLoad(1000);
+                    
+                    // 일정 시간 대기 (봇 탐지 방지)
+                    int waitTime = new Random().Next(3000, 7000);
+                    Thread.Sleep(waitTime);
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"Error processing comment", ex);
+                    Logger.Error($"Error processing author: {ex.Message}");
                     
                     // 오류 발생 시 원래 창으로 복구 시도
                     try
@@ -209,7 +346,7 @@ namespace RJBlogProject.Service
                 }
             }
 
-            Logger.Info($"Successfully processed {processedCount} comments");
+            Logger.Info($"Successfully processed {processedCount} out of {authorUrls.Count} authors");
         }
 
         private bool FindLatestPostAndComment(string commentText)
