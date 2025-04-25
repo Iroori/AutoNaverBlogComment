@@ -1,5 +1,6 @@
 ﻿using OpenQA.Selenium;
 using OpenQA.Selenium.Support.UI;
+using RJBlogProject.Common;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -128,7 +129,7 @@ namespace RJBlogProject.Common
         }
 
         /// <summary>
-        /// 클립보드를 통해 텍스트를 입력합니다. (네이버 로그인 우회)
+        /// 직접 텍스트를 입력합니다. (클립보드 대신 직접 입력 방식 사용)
         /// </summary>
         public static void InputTextViaClipboard(this IWebDriver driver, IWebElement element, string text)
         {
@@ -138,17 +139,27 @@ namespace RJBlogProject.Common
             try
             {
                 element.Click();
-                System.Windows.Forms.Clipboard.SetText(text);
-                var actions = new OpenQA.Selenium.Interactions.Actions(driver);
-                actions.KeyDown(OpenQA.Selenium.Keys.Control)
-                       .SendKeys("v")
-                       .KeyUp(OpenQA.Selenium.Keys.Control)
-                       .Perform();
+                
+                // 클립보드 대신 직접 텍스트 입력 - SendKeys 방식 사용
+                element.Clear();
+                
+                // JavaScript를 사용하여 텍스트 입력 시도
+                try
+                {
+                    ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].value = arguments[1];", element, text);
+                }
+                catch
+                {
+                    // JavaScript 실패 시 SendKeys 사용
+                    element.SendKeys(text);
+                }
+                
                 Thread.Sleep(500); // 입력 대기
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error inputting text via clipboard: {ex.Message}");
+                Console.WriteLine($"Error inputting text: {ex.Message}");
+                Logger.Error($"Error inputting text: {ex.Message}", ex);
                 throw;
             }
         }

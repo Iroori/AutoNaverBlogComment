@@ -23,6 +23,13 @@ namespace RJBlogProject.Common
                 // 기타 옵션 설정
                 options.AddArgument("--start-maximized");
                 options.AddArgument("--disable-notifications");
+                options.AddArgument("--disable-web-security");
+                options.AddArgument("--disable-features=IsolateOrigins,site-per-process");
+                options.AddArgument("--disable-blink-features=AutomationControlled");
+                
+                // 네이버 로그인 탐지 우회 설정
+                options.AddUserProfilePreference("credentials_enable_service", false);
+                options.AddUserProfilePreference("profile.password_manager_enabled", false);
                 
                 var driver = new ChromeDriver(options);
                 

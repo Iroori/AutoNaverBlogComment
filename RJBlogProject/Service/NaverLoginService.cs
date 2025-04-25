@@ -49,17 +49,36 @@ namespace RJBlogProject.Service
                 Driver.Navigate().GoToUrl("https://nid.naver.com/nidlogin.login");
                 Driver.WaitForPageLoad(2000);
 
-                // 아이디 입력
-                var idInput = Driver.WaitAndFindElement(By.Id("id"));
-                Driver.InputTextViaClipboard(idInput, userId);
-
-                // 패스워드 입력
-                var pwInput = Driver.WaitAndFindElement(By.Id("pw"));
-                Driver.InputTextViaClipboard(pwInput, password);
-
-                // 로그인 버튼 클릭
-                var loginButton = Driver.WaitAndFindElement(By.Id("log.login"));
-                Driver.ClickWithJavaScript(loginButton);
+                // JavaScript를 사용하여 로그인 처리
+                Logger.Info("Attempting to login with JavaScript...");
+                try
+                {
+                    // JavaScript를 사용하여 직접 id와 password 필드에 값 입력
+                    ((IJavaScriptExecutor)Driver).ExecuteScript(
+                        "document.getElementById('id').value = arguments[0];" +
+                        "document.getElementById('pw').value = arguments[1];", 
+                        userId, password);
+                    
+                    // 로그인 버튼 클릭
+                    var loginButton = Driver.WaitAndFindElement(By.Id("log.login"));
+                    Driver.ClickWithJavaScript(loginButton);
+                    
+                    Logger.Info("JavaScript login attempt completed");
+                }
+                catch (Exception jsEx)
+                {
+                    Logger.Warning($"JavaScript login failed: {jsEx.Message}. Trying alternative method...");
+                    
+                    // 실패하면 일반적인 방식으로 시도
+                    var idInput = Driver.WaitAndFindElement(By.Id("id"));
+                    Driver.InputTextViaClipboard(idInput, userId);
+                    
+                    var pwInput = Driver.WaitAndFindElement(By.Id("pw"));
+                    Driver.InputTextViaClipboard(pwInput, password);
+                    
+                    var loginButton = Driver.WaitAndFindElement(By.Id("log.login"));
+                    Driver.ClickWithJavaScript(loginButton);
+                }
 
                 Driver.WaitForPageLoad(2000);
 

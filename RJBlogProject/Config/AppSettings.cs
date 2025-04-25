@@ -13,6 +13,8 @@ namespace RJBlogProject.Config
         public string DefaultBlogId { get; set; }
         public int DefaultWaitTimeSeconds { get; set; } = 10;
         public string DefaultCommentText { get; set; } = "좋은하루되세요 포스팅잘보고갑니다~!";
+        public string SpecificPostUrl { get; set; } = "";
+        public bool UseSpecificPost { get; set; } = false;
         
         private static readonly string ConfigFileName = "UserSettings.xml";
         private static readonly string ConfigFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ConfigFileName);
